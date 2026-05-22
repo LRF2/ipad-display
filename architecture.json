@@ -1,0 +1,418 @@
+{
+  "project": {
+    "name": "ipad-as-display",
+    "description": "Extends a Windows desktop to an iPad over Wi-Fi or USB as a second monitor. Screen is captured, JPEG-encoded, and streamed to a React PWA running in iPad Safari. Touch events are forwarded back as mouse/keyboard input via WebSocket.",
+    "version": "1.0.0",
+    "target_platform": "Windows 10/11",
+    "client_platform": "iPad Safari / PWA"
+  },
+
+  "tech_stack": {
+    "server": {
+      "runtime": "Python 3.10+",
+      "framework": "FastAPI + uvicorn[standard]",
+      "screen_capture": ["dxcam>=0.0.5 (primary, DXGI)", "mss>=9.0.1 (fallback, GDI)"],
+      "image_encoding": "Pillow>=10.4.0 (JPEG)",
+      "input_injection": "pyautogui>=0.9.54",
+      "webrtc": "aiortc>=1.9.0 + av>=12.0.0 + numpy>=1.26.0",
+      "websockets": "websockets>=12.0",
+      "testing": "pytest>=8.0.0"
+    },
+    "client": {
+      "framework": "React 18 (Vite, JSX)",
+      "pwa": true,
+      "styling": "inline styles (no CSS framework)",
+      "build_tool": "Vite",
+      "stream_protocols": ["WebRTC H.264", "JPEG WebSocket", "MJPEG HTTP"]
+    }
+  },
+
+  "entry_points": {
+    "server": "server/main.py — `python server/main.py` starts uvicorn on HOST:PORT (default 0.0.0.0:8080). Spawns capture_loop in a daemon thread.",
+    "client_dev": "client/ — `npm run dev` for Vite dev server",
+    "client_build": "client/ — `npm run build` outputs to client/dist/, served by FastAPI StaticFiles at /",
+    "setup": "setup_and_run.bat — installs deps, builds React, starts server",
+    "run": "run.bat — starts server (assumes deps already installed)"
+  },
+
+  "components": {
+    "server": {
+      "main.py": {
+        "role": "App factory and startup",
+        "responsibilities": ["Creates FastAPI app", "Registers all routers", "Mounts client/dist as static files at /", "Starts capture_loop daemon thread", "Prints startup banner with IP, QR URL, PIN"]
+      },
+      "config.py": {
+        "role": "Configuration management",
+        "responsibilities": ["Defines DEFAULT_CONFIG and validation constants", "Loads startup config: defaults → config.local.json → env vars", "Provides save_config_file (atomic write with tmp-rename)", "Exposes HOST, PORT, ALLOWED_ORIGINS, RECOMMENDED_RESOLUTIONS"],
+        "persistence": "server/config.local.json (gitignored, JSON)"
+      },
+      "state.py": {
+        "role": "In-memory shared state singleton",
+        "responsibilities": ["Holds latest JPEG frame (bytes) with frame_id and stats", "Tracks active_streams count (pauses capture when 0)", "Tracks active WebSocket connections list", "Holds runtime_config with config_version for cache-busting", "Thread-safe via threading.Lock for frame, config, streams, stats"],
+        "note": "No database. All state is in-process. Restarting the server resets all state except persisted config."
+      },
+      "auth.py": {
+        "role": "Authentication and pairing",
+        "responsibilities": ["Generates SESSION_TOKEN (urlsafe, 24 bytes) and PAIRING_PIN (6-digit) at startup", "require_token() raises HTTP 401 for invalid tokens", "close_unauthorized() closes WebSocket with code 1008", "Rate-limits pairing: 5 failures per 60s window"],
+        "token_storage_client": "iPad localStorage key: ipad-display-token-v1"
+      },
+      "monitors.py": {
+        "role": "Monitor discovery and resolution advisory",
+        "responsibilities": ["selected_monitor(): resolves monitor_index to mss monitor dict", "monitor_list(): returns all monitors with dimensions and aspect ratio", "resolution_advisory(): computes aspect mismatch % between monitor and iPad viewport, recommends resolutions", "settings_response(): assembles full /settings GET payload"]
+      },
+      "qr.py": {
+        "role": "QR code generation",
+        "responsibilities": ["Dependency-free SVG QR generator", "make_qr_svg(url) → SVG string", "pairing_url(ip, port, pin) → URL with ?pin= param", "pairing_page(pin, url) → full HTML page with QR and PIN display"]
+      },
+      "capture/manager.py": {
+        "role": "Capture backend selector",
+        "responsibilities": ["capture_loop(): tries dxcam_capture_loop(), falls back to mss_capture_loop() on import error or exception"]
+      },
+      "capture/base.py": {
+        "role": "Frame encoding and publishing",
+        "responsibilities": ["encode_frame(): resizes PIL image if scale<1, encodes to JPEG bytes, returns (bytes, encode_ms)", "publish_frame(): calls encode_frame, calls state.set_latest_frame with stats"]
+      },
+      "capture/dxcam_capture.py": {
+        "role": "High-performance DXGI capture loop",
+        "responsibilities": ["Uses dxcam for low-latency DirectX screen grab", "Pauses (camera.stop()) when active_streams == 0", "Re-initializes camera on config version change (monitor switch, settings change)", "Calls publish_frame per tick, sleeps to maintain target FPS"],
+        "note": "Maps monitor_index to dxcam output_idx as (monitor_index - 1)"
+      },
+      "capture/mss_capture.py": {
+        "role": "GDI fallback capture loop",
+        "responsibilities": ["Same loop structure as dxcam but uses mss.grab()", "No camera object to manage; lighter but higher latency than DXGI"]
+      },
+      "routes/pairing.py": {
+        "role": "PIN pairing endpoints",
+        "endpoints": [
+          "GET /pair-qr — HTML page with QR code and PIN",
+          "GET /pair-qr.svg — raw QR SVG",
+          "POST /pair {pin} → {token} — validates PIN, returns session token"
+        ]
+      },
+      "routes/settings.py": {
+        "role": "Settings read/write endpoints",
+        "endpoints": [
+          "GET /settings?token&viewport_width&viewport_height → full settings + monitors + advisory + stream_stats",
+          "GET /info — alias for /settings",
+          "GET /stats?token → fps, quality, scale, auto_quality, active_streams, stream_stats, delivery_stats",
+          "PATCH /settings?token body:{partial config} → updated settings response"
+        ]
+      },
+      "routes/stream.py": {
+        "role": "Video streaming endpoints",
+        "endpoints": [
+          "GET /stream?token — MJPEG multipart/x-mixed-replace stream (HTTP, polling latest frame)",
+          "WS /frames?token — JPEG binary WebSocket stream (one frame per message, rate-limited to min(30, fps))"
+        ]
+      },
+      "routes/websocket.py": {
+        "role": "Input event receiver",
+        "endpoints": ["WS /ws?token — receives JSON input events from iPad"],
+        "event_types": ["ping→pong", "mousemove", "mousedown", "mouseup", "click", "rightclick", "scroll (dy)", "pinch (scale → ctrl+scroll)", "keydown", "keyup", "keypress", "typewrite (text)", "hotkey (keys[])"],
+        "note": "Refreshes monitor dimensions on config version change without reconnect"
+      },
+      "routes/webrtc.py": {
+        "role": "WebRTC H.264 signaling and track",
+        "endpoints": ["POST /webrtc/offer?token body:{sdp,type} → {sdp,type}"],
+        "responsibilities": ["ScreenVideoTrack: grabs frames via mss, scales with PIL, wraps as av VideoFrame", "prefer_h264(): sets H.264 as preferred codec via RTCRtpSender capabilities", "Cleans up peer connection on failed/closed/disconnected state"],
+        "optional_deps": "aiortc, av, numpy — server returns HTTP 501 if not installed"
+      }
+    },
+
+    "client": {
+      "main.jsx": {
+        "role": "React entry point",
+        "responsibilities": ["Mounts App into #root", "Imports index.css (global reset/body styles)"]
+      },
+      "App.jsx": {
+        "role": "Root orchestration component",
+        "responsibilities": ["Wires all hooks together", "Routes between PairingScreen (no token) and main display (token present)", "Computes displayBox via getDisplayBox()", "Passes props down to DisplaySurface, Hud, SettingsPanel, SidecarControls, ConnectionOverlay"]
+      },
+      "hooks/usePairing.js": {
+        "role": "Token persistence and PIN pairing",
+        "responsibilities": ["Reads/writes token from localStorage (TOKEN_KEY)", "pairDevice(pin) → POST /pair → stores token", "clearSavedToken() removes token, triggers re-pair"]
+      },
+      "hooks/useDisplaySettings.js": {
+        "role": "Settings fetch and patch",
+        "responsibilities": ["loadSettings() → GET /settings with viewport dims", "applySettings(patch) → PATCH /settings", "Clears token on 401 (forces re-pair)", "Exposes displayInfo, settings, settingsError, savingSettings"]
+      },
+      "hooks/useStreamStatus.js": {
+        "role": "Multi-mode stream management",
+        "stream_mode_cascade": [
+          "1. WebRTC (RTCPeerConnection + POST /webrtc/offer) — primary, H.264",
+          "2. JPEG WebSocket (WS /frames) — fallback on WebRTC failure",
+          "3. MJPEG HTTP (GET /stream) — final fallback on WS failure"
+        ],
+        "responsibilities": ["Manages peer connection lifecycle", "Blob URL management for JPEG frames (rAF-throttled)", "Exponential backoff retry (1s → 10s)", "reconnectStream() resets cascade from top"]
+      },
+      "hooks/useWebSocketInput.js": {
+        "role": "Input WebSocket connection and sending",
+        "responsibilities": ["Connects to WS /ws, auto-reconnects every 2s on close", "Ping/pong every 2s for latency measurement", "send(payload) serializes to JSON", "sendMouseDown / releaseMouse track drag state", "Releases mouse on disconnect"]
+      },
+      "hooks/useLiveStats.js": {
+        "role": "Stats polling and auto-quality control",
+        "responsibilities": ["Polls GET /stats every 1s", "Auto-quality down: encode_ms>28 OR size>900KB → reduce fps/quality/scale, 8s cooldown", "Auto-quality up: encode_ms<14 AND size<350KB for 20 consecutive samples → increase fps/quality/scale, 12s cooldown"]
+      },
+      "hooks/useWakeLock.js": {
+        "role": "Screen Wake Lock",
+        "responsibilities": ["Acquires navigator.wakeLock.request('screen') when token present and stream live", "Re-acquires on visibilitychange"]
+      },
+      "hooks/useViewportSize.js": {
+        "role": "Viewport dimensions tracker",
+        "responsibilities": ["Returns {w, h} from window.visualViewport or window.innerWidth/Height", "Updates on resize"]
+      },
+      "components/DisplaySurface.jsx": {
+        "role": "Main display and input handler",
+        "responsibilities": ["Renders <video> for WebRTC or <img> for JPEG/MJPEG", "Applies CSS filter for brightness/contrast/saturation", "Handles all touch events: tap→click, long-press→rightclick, drag→mousemove, two-finger-scroll, pinch, three-finger gestures", "Maps touch coordinates to normalized [0,1] space relative to displayBox", "Renders TouchCursor overlay"]
+      },
+      "components/Hud.jsx": {
+        "role": "Top status bar",
+        "responsibilities": ["Shows stream mode (WebRTC/JPEG-WS/MJPEG), WS status, latency, FPS, frame size", "Settings button, Reconnect button, hide HUD button", "Double-tap to toggle via setShowHUD"]
+      },
+      "components/SettingsPanel.jsx": {
+        "role": "In-app settings drawer",
+        "responsibilities": ["Monitor selector, view mode (fit/fill/stretch/native)", "FPS/quality/scale sliders, auto-quality toggle", "Color presets + brightness/contrast/saturation sliders", "Touch input, touch cursor, scroll speed, pinch zoom, three-finger gesture toggles", "Sidecar sidebar/touchbar position selectors", "Resolution Advisor display"]
+      },
+      "components/SidecarControls.jsx": {
+        "role": "On-screen sidecar sidebar and touch bar",
+        "responsibilities": ["Configurable position (left/right/off for sidebar, top/bottom/off for touchbar)", "Sends hotkey/keypress events via send()"]
+      },
+      "components/ConnectionOverlay.jsx": {
+        "role": "Connection state overlay",
+        "responsibilities": ["Shows connecting/error/disconnected status over display", "Does not block touch events when live"]
+      },
+      "components/PairingScreen.jsx": {
+        "role": "Initial pairing UI",
+        "responsibilities": ["PIN input form", "Calls pairDevice(pin) on submit", "Shows pairing errors and busy state"]
+      },
+      "components/TouchCursor.jsx": {
+        "role": "Visual touch cursor dot",
+        "responsibilities": ["Renders a dot at touch position when touch_cursor enabled"]
+      },
+      "utils/display.js": {
+        "role": "Display layout math",
+        "responsibilities": ["getDisplayBox(displayInfo, viewportSize, viewMode) → {x,y,w,h,scaleX,scaleY} for coordinate mapping"]
+      },
+      "utils/colors.js": {
+        "role": "UI color constants"
+      }
+    }
+  },
+
+  "data_flows": {
+    "screen_capture_to_ipad": {
+      "description": "Continuous screen frame pipeline",
+      "steps": [
+        "1. capture_loop (daemon thread): dxcam.grab() or mss.grab() → PIL Image",
+        "2. capture/base.publish_frame(): resize (if scale<1) + JPEG encode → bytes + stats",
+        "3. state.set_latest_frame(): stores bytes + frame_id + stats under frame_lock",
+        "4a. WebRTC path: ScreenVideoTrack.recv() pulls from mss directly (independent loop), wraps as av.VideoFrame → aiortc sends via RTP",
+        "4b. JPEG WS path: /frames WS sends bytes to connected client at target FPS",
+        "4c. MJPEG path: /stream generator yields multipart boundary + JPEG bytes"
+      ]
+    },
+    "touch_input_to_windows": {
+      "description": "iPad touch → Windows mouse/keyboard",
+      "steps": [
+        "1. DisplaySurface.jsx: touch event → normalize to [0,1] relative to displayBox",
+        "2. useWebSocketInput.send(): serialize to JSON, send on WS /ws",
+        "3. server/routes/websocket.py: parse JSON, check config version, compute abs_x/abs_y",
+        "4. pyautogui: moveTo / mouseDown / mouseUp / click / rightClick / scroll / hotkey / press / write"
+      ]
+    },
+    "settings_sync": {
+      "description": "Bidirectional settings between iPad and server",
+      "steps": [
+        "1. iPad opens app → useDisplaySettings.loadSettings() → GET /settings?viewport_width=&viewport_height=",
+        "2. Server: monitors.settings_response() assembles config + monitors + advisory + stream_stats",
+        "3. iPad user changes setting → applySettings(patch) → PATCH /settings body:{key:val}",
+        "4. Server: state.update_config() validates + updates runtime_config + increments config_version + saves config.local.json",
+        "5. Capture loop detects config version change on next tick → reinitializes capture parameters"
+      ]
+    },
+    "pairing_flow": {
+      "steps": [
+        "1. Server prints PIN at startup (6-digit random)",
+        "2. User opens /pair-qr on PC → scans QR with iPad camera → opens app URL with ?pin= prefilled",
+        "3. iPad → POST /pair {pin} → server validates with secrets.compare_digest → returns {token}",
+        "4. iPad stores token in localStorage (TOKEN_KEY)",
+        "5. All subsequent requests include ?token= query param"
+      ]
+    },
+    "auto_quality": {
+      "steps": [
+        "1. useLiveStats polls GET /stats every 1s",
+        "2. If auto_quality enabled and overloaded (encode_ms>28 OR size>900KB): PATCH /settings {fps:≤30, quality:≤75, scale:≤0.75}, 8s cooldown",
+        "3. If 20 consecutive stable samples (encode_ms<14 AND size<350KB): PATCH /settings {fps+5, quality+5, scale+0.05}, 12s cooldown"
+      ]
+    }
+  },
+
+  "api_endpoints": [
+    { "method": "GET",  "path": "/",               "auth": false, "description": "Serves React PWA (client/dist/index.html via StaticFiles)" },
+    { "method": "POST", "path": "/pair",            "auth": false, "body": "{pin: string}", "response": "{token: string}", "description": "PIN pairing — returns session token" },
+    { "method": "GET",  "path": "/pair-qr",         "auth": false, "response": "HTML page", "description": "QR code page for iPad scanning" },
+    { "method": "GET",  "path": "/pair-qr.svg",     "auth": false, "response": "SVG",       "description": "Raw QR code SVG" },
+    { "method": "GET",  "path": "/settings",        "auth": true,  "query": "token, viewport_width, viewport_height", "description": "Full settings + monitors list + resolution advisory + frame stats" },
+    { "method": "PATCH","path": "/settings",        "auth": true,  "body": "partial config dict", "description": "Update one or more config keys, persists to config.local.json" },
+    { "method": "GET",  "path": "/info",            "auth": true,  "description": "Alias for GET /settings" },
+    { "method": "GET",  "path": "/stats",           "auth": true,  "description": "Live perf: fps, quality, scale, active_streams, frame encode stats, delivery stats" },
+    { "method": "GET",  "path": "/stream",          "auth": true,  "description": "MJPEG multipart HTTP stream — fallback streaming mode" },
+    { "method": "WS",   "path": "/frames",          "auth": true,  "description": "Binary JPEG WebSocket stream — secondary streaming mode" },
+    { "method": "WS",   "path": "/ws",              "auth": true,  "description": "Input event receiver: mouse, keyboard, scroll, pinch, gestures" },
+    { "method": "POST", "path": "/webrtc/offer",    "auth": true,  "body": "{sdp, type}", "response": "{sdp, type}", "description": "WebRTC SDP offer/answer — primary streaming mode (H.264)" }
+  ],
+
+  "websocket_message_types": {
+    "client_to_server": [
+      { "type": "ping", "description": "Latency probe" },
+      { "type": "mousemove", "fields": ["x", "y"], "description": "Normalized [0,1] coords" },
+      { "type": "mousedown", "fields": ["x", "y"] },
+      { "type": "mouseup",   "fields": ["x", "y"] },
+      { "type": "click",     "fields": ["x", "y"] },
+      { "type": "rightclick","fields": ["x", "y"] },
+      { "type": "scroll",    "fields": ["x", "y", "dy"], "description": "dy is raw pixel delta; server converts to pyautogui scroll clicks" },
+      { "type": "pinch",     "fields": ["x", "y", "scale"], "description": "scale>1 = zoom in (ctrl+scroll up)" },
+      { "type": "keydown",   "fields": ["key"], "description": "pyautogui key name" },
+      { "type": "keyup",     "fields": ["key"] },
+      { "type": "keypress",  "fields": ["key"] },
+      { "type": "typewrite", "fields": ["text"], "description": "Full text string via pyautogui.write()" },
+      { "type": "hotkey",    "fields": ["keys"], "description": "Array of key names for pyautogui.hotkey()" }
+    ],
+    "server_to_client": [
+      { "type": "pong", "description": "Response to ping, used for RTT measurement" }
+    ]
+  },
+
+  "config_schema": {
+    "monitor_index":        { "type": "int",   "default": 1,     "range": "1..N monitors",   "env": "IPAD_DISPLAY_MONITOR" },
+    "fps":                  { "type": "int",   "default": 30,    "range": "1..60",            "env": "IPAD_DISPLAY_FPS" },
+    "quality":              { "type": "int",   "default": 75,    "range": "40..95",           "env": "IPAD_DISPLAY_JPEG_QUALITY" },
+    "scale":                { "type": "float", "default": 1.0,   "range": "0.25..1.0",        "env": "IPAD_DISPLAY_SCALE" },
+    "view_mode":            { "type": "str",   "default": "fit", "options": ["fit","fill","stretch","native"], "env": "IPAD_DISPLAY_VIEW_MODE" },
+    "input_enabled":        { "type": "bool",  "default": true,  "env": "IPAD_DISPLAY_INPUT_ENABLED" },
+    "touch_cursor":         { "type": "bool",  "default": true,  "env": "IPAD_DISPLAY_TOUCH_CURSOR" },
+    "sidebar_position":     { "type": "str",   "default": "left","options": ["left","right","off"] },
+    "touchbar_position":    { "type": "str",   "default": "bottom","options": ["top","bottom","off"] },
+    "display_brightness":   { "type": "float", "default": 0.96,  "range": "0.75..1.25" },
+    "display_contrast":     { "type": "float", "default": 1.12,  "range": "0.75..1.5" },
+    "display_saturation":   { "type": "float", "default": 1.08,  "range": "0.75..1.5" },
+    "auto_quality":         { "type": "bool",  "default": false },
+    "pinch_zoom_enabled":   { "type": "bool",  "default": true },
+    "three_finger_gestures":{ "type": "bool",  "default": true },
+    "scroll_sensitivity":   { "type": "float", "default": 1.0,   "range": "0.25..3.0" }
+  },
+
+  "architecture_decisions": [
+    {
+      "decision": "Stream mode cascade: WebRTC → JPEG WS → MJPEG",
+      "rationale": "WebRTC gives H.264 hardware encoding and lowest latency. JPEG WS avoids HTTP connection overhead vs MJPEG. MJPEG is the universal fallback that works on any browser.",
+      "implication": "Client must manage three distinct connection paths and their lifecycle"
+    },
+    {
+      "decision": "Single in-process state singleton (state.py)",
+      "rationale": "Avoids external dependencies (Redis, DB) for a single-user local tool. Simple threading.Lock is sufficient.",
+      "implication": "Server restart resets all in-flight state. Not scalable beyond one session."
+    },
+    {
+      "decision": "Capture pauses when active_streams == 0",
+      "rationale": "No point capturing frames when no client is watching. Saves CPU.",
+      "implication": "First frame after reconnect may be slightly delayed while capture restarts"
+    },
+    {
+      "decision": "config_version integer for cache-busting",
+      "rationale": "Capture loop and WebSocket input handler both need to react to settings changes (monitor switch, scale change). Version bump is detected on next loop tick without a separate event/queue.",
+      "implication": "All hot-path loops must call get_config() on every tick"
+    },
+    {
+      "decision": "Token passed as ?token= query param (not Authorization header)",
+      "rationale": "WebSocket connections and <img src=> MJPEG cannot set custom headers. Query param is the only portable option.",
+      "implication": "Token visible in server logs and browser history. Acceptable for local LAN use."
+    },
+    {
+      "decision": "Coordinate normalization [0,1] over the wire",
+      "rationale": "Decouples iPad viewport size from Windows monitor resolution. Server recomputes absolute coords from monitor dimensions.",
+      "implication": "WebSocket handler must know current monitor dimensions; refreshed on config_version change"
+    },
+    {
+      "decision": "dxcam preferred over mss",
+      "rationale": "dxcam uses DXGI (DirectX desktop duplication) — significantly lower latency and CPU than GDI-based mss, especially at 30-60 fps.",
+      "implication": "dxcam maps monitor by output index (0-based) not mss index (1-based): output_idx = monitor_index - 1"
+    },
+    {
+      "decision": "React PWA with no CSS framework",
+      "rationale": "Keeps bundle minimal for faster load on iPad. All styles are inline.",
+      "implication": "No design system; all component styles are co-located inline objects"
+    },
+    {
+      "decision": "Auto-quality runs entirely on the client",
+      "rationale": "Avoids server-side logic that would require knowing client conditions. Client observes encode_ms and frame size from /stats, decides when to throttle.",
+      "implication": "Auto-quality has 1s polling lag. Two iPads connected could fight over quality settings."
+    }
+  ],
+
+  "constraints": [
+    "Windows-only: dxcam and pyautogui rely on Win32 APIs. mss also supports macOS/Linux but capture and input injection would need replacement.",
+    "Single-session: SESSION_TOKEN is one token for all clients. Multiple iPads share the same token.",
+    "No HTTPS by default: Wake Lock and Clipboard API require secure context (HTTPS or localhost). On LAN via IP, HTTPS would need a self-signed cert.",
+    "iPad Safari touch events only: no mouse events on iPad; all input must go through the touch handler in DisplaySurface.jsx.",
+    "pyautogui.PAUSE=0 is set globally: eliminates the 0.1s default delay between actions but removes all safety pauses.",
+    "WebRTC ScreenVideoTrack uses its own mss instance, not the shared capture loop: runs at display framerate, not config fps.",
+    "aiortc is optional: server runs without it (HTTP 501 on /webrtc/offer), falling back to JPEG WS / MJPEG.",
+    "config.local.json is not multi-process safe: atomic tmp-rename write mitigates single-process races but would fail under multi-worker uvicorn."
+  ],
+
+  "open_todos": [
+    {
+      "item": "Clipboard sync",
+      "priority": "medium",
+      "description": "Copy/paste between iPad and Windows host. PC→iPad: read Windows clipboard (pyperclip/win32clipboard), send text over WebSocket to client, write to navigator.clipboard. iPad→PC: navigator.clipboard.readText() on user gesture (HTTPS required), send via WebSocket typewrite or new clipboard_push event.",
+      "blockers": ["navigator.clipboard.readText requires HTTPS on real LAN IPs", "Clipboard write on iPad requires user gesture"]
+    },
+    {
+      "item": "Virtual display helper flow",
+      "priority": "medium",
+      "description": "Guided wizard in SettingsPanel when resolution_advisory.status == 'warning'. Steps: 1) link to Virtual Display Driver install, 2) show recommended resolutions for this iPad viewport, 3) Windows Display Settings instructions. Backend already provides advisory.recommended_resolutions and advisory.mismatch_percent.",
+      "existing_hooks": ["monitors.resolution_advisory() already computes mismatch_percent and recommended_resolutions", "SettingsPanel already renders the advisory block"]
+    }
+  ],
+
+  "file_map": {
+    "server/main.py":                  "App factory, startup banner, capture thread",
+    "server/config.py":                "Defaults, env parsing, config.local.json persistence",
+    "server/state.py":                 "In-memory frame buffer, config, stream/connection counters",
+    "server/auth.py":                  "Session token, PIN generation, rate limiting",
+    "server/monitors.py":              "Monitor discovery, resolution advisory, settings payload assembly",
+    "server/qr.py":                    "Dependency-free QR SVG + pairing page HTML",
+    "server/capture/manager.py":       "dxcam/mss selector",
+    "server/capture/base.py":          "JPEG encode + frame publish",
+    "server/capture/dxcam_capture.py": "DXGI capture loop (primary)",
+    "server/capture/mss_capture.py":   "GDI capture loop (fallback)",
+    "server/routes/pairing.py":        "POST /pair, GET /pair-qr, GET /pair-qr.svg",
+    "server/routes/settings.py":       "GET+PATCH /settings, GET /info, GET /stats",
+    "server/routes/stream.py":         "GET /stream (MJPEG), WS /frames (JPEG WS)",
+    "server/routes/websocket.py":      "WS /ws — input event processing",
+    "server/routes/webrtc.py":         "POST /webrtc/offer — SDP signaling + ScreenVideoTrack",
+    "server/tests/":                   "pytest: test_auth, test_config, test_settings_route",
+    "client/src/main.jsx":             "React entry point",
+    "client/src/App.jsx":              "Root component, hook wiring, render tree",
+    "client/src/api.js":               "fetch/WebSocket URL builders, typed API calls",
+    "client/src/constants.js":         "Path constants, gesture thresholds",
+    "client/src/hooks/usePairing.js":           "Token localStorage, POST /pair",
+    "client/src/hooks/useDisplaySettings.js":   "GET+PATCH /settings",
+    "client/src/hooks/useStreamStatus.js":      "WebRTC→JPEG WS→MJPEG cascade",
+    "client/src/hooks/useWebSocketInput.js":    "WS /ws connection, send()",
+    "client/src/hooks/useLiveStats.js":         "GET /stats polling, auto-quality logic",
+    "client/src/hooks/useWakeLock.js":          "navigator.wakeLock",
+    "client/src/hooks/useViewportSize.js":      "visualViewport dimensions",
+    "client/src/components/DisplaySurface.jsx": "video/img element, all touch handlers",
+    "client/src/components/Hud.jsx":            "Status bar overlay",
+    "client/src/components/SettingsPanel.jsx":  "Settings drawer",
+    "client/src/components/SidecarControls.jsx":"Sidecar sidebar + touchbar",
+    "client/src/components/ConnectionOverlay.jsx": "Connecting/error overlay",
+    "client/src/components/PairingScreen.jsx":  "PIN entry screen",
+    "client/src/components/TouchCursor.jsx":    "Touch cursor dot",
+    "client/src/utils/display.js":              "getDisplayBox() layout math",
+    "client/src/utils/colors.js":               "UI color palette"
+  }
+}

@@ -1,0 +1,1058 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>iPad as Display — Architecture Map</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --bg: #0b0f1a;
+    --surface: #111827;
+    --surface2: #1a2235;
+    --border: rgba(255,255,255,0.08);
+    --blue: #3b82f6;
+    --indigo: #6366f1;
+    --violet: #8b5cf6;
+    --cyan: #06b6d4;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+    --slate: #64748b;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: #e2e8f0; font-family: -apple-system, 'Inter', sans-serif; min-height: 100vh; }
+
+  /* ── Scrollbar ─────────────────────────────────── */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.12); border-radius: 3px; }
+
+  /* ── Canvas / pan-zoom wrapper ─────────────────── */
+  #canvas-wrap { width: 100%; overflow: hidden; cursor: grab; user-select: none; }
+  #canvas-wrap.grabbing { cursor: grabbing; }
+  #canvas { transform-origin: 0 0; will-change: transform; padding: 48px; min-width: 2200px; }
+
+  /* ── Cards ─────────────────────────────────────── */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    transition: box-shadow .2s, border-color .2s, transform .15s;
+    position: relative;
+  }
+  .card:hover {
+    box-shadow: 0 0 0 1px rgba(99,102,241,.5), 0 8px 32px rgba(0,0,0,.5);
+    border-color: rgba(99,102,241,.4);
+    transform: translateY(-1px);
+    z-index: 10;
+  }
+  .card-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+
+  /* ── Zone panels ───────────────────────────────── */
+  .zone {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px;
+    position: relative;
+  }
+  .zone-label {
+    position: absolute;
+    top: -12px;
+    left: 20px;
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    padding: 2px 10px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+  }
+
+  /* ── Badges ────────────────────────────────────── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 10px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 99px;
+    white-space: nowrap;
+  }
+
+  /* ── File rows ─────────────────────────────────── */
+  .file-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 5px 8px;
+    border-radius: 6px;
+    font-size: 11.5px;
+    transition: background .15s;
+    cursor: default;
+  }
+  .file-row:hover { background: rgba(255,255,255,.05); }
+  .file-name { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 11px; color: #93c5fd; font-weight: 500; flex-shrink: 0; }
+  .file-desc { color: #94a3b8; line-height: 1.3; }
+
+  /* ── Arrows / flow lines ───────────────────────── */
+  .flow-arrow {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #64748b;
+    padding: 3px 0;
+  }
+  .arrow-line {
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, transparent, currentColor, transparent);
+    opacity: .5;
+  }
+
+  /* ── Endpoint pills ────────────────────────────── */
+  .endpoint {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-radius: 7px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    font-size: 11px;
+    transition: background .15s, border-color .2s;
+    cursor: default;
+  }
+  .endpoint:hover { background: rgba(99,102,241,.12); border-color: rgba(99,102,241,.4); }
+  .method { font-family: monospace; font-weight: 800; font-size: 10px; padding: 1px 6px; border-radius: 4px; flex-shrink: 0; }
+  .ep-path { font-family: monospace; color: #e2e8f0; }
+  .ep-desc { color: #64748b; margin-left: auto; font-size: 10.5px; text-align: right; max-width: 200px; }
+
+  /* ── Tooltip ───────────────────────────────────── */
+  .has-tooltip { position: relative; }
+  .tooltip {
+    display: none;
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #1e293b;
+    border: 1px solid rgba(255,255,255,.15);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11px;
+    color: #cbd5e1;
+    white-space: nowrap;
+    z-index: 999;
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    max-width: 280px;
+    white-space: normal;
+  }
+  .has-tooltip:hover .tooltip { display: block; }
+
+  /* ── Tabs ──────────────────────────────────────── */
+  .tab-btn { padding: 6px 16px; border-radius: 7px; font-size: 12px; font-weight: 600; cursor: pointer; border: 1px solid transparent; transition: all .15s; }
+  .tab-btn.active { background: var(--indigo); color: #fff; }
+  .tab-btn:not(.active) { color: #64748b; }
+  .tab-btn:not(.active):hover { color: #cbd5e1; background: rgba(255,255,255,.05); }
+
+  /* ── Collapsible sections ──────────────────────── */
+  .section-toggle { cursor: pointer; user-select: none; }
+  .section-toggle:hover .section-title { color: #e2e8f0; }
+  .section-body { overflow: hidden; transition: max-height .25s ease; }
+
+  /* ── Data flow step ────────────────────────────── */
+  .step {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .step:last-child { border-bottom: none; }
+  .step-num {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 800;
+    flex-shrink: 0;
+    margin-top: 1px;
+  }
+  .step-text { font-size: 12px; color: #94a3b8; line-height: 1.5; }
+  .step-text code { background: rgba(255,255,255,.07); padding: 1px 5px; border-radius: 4px; font-size: 10.5px; color: #93c5fd; }
+
+  /* ── Legend ────────────────────────────────────── */
+  .legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Zoom controls ─────────────────────────────── */
+  #zoom-controls {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    gap: 6px;
+    z-index: 100;
+  }
+  .zoom-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 8px;
+    background: rgba(17,24,39,.9);
+    border: 1px solid rgba(255,255,255,.12);
+    color: #e2e8f0;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    backdrop-filter: blur(10px);
+    transition: background .15s;
+    line-height: 1;
+  }
+  .zoom-btn:hover { background: rgba(99,102,241,.3); border-color: rgba(99,102,241,.5); }
+  #zoom-level {
+    height: 36px;
+    min-width: 54px;
+    border-radius: 8px;
+    background: rgba(17,24,39,.9);
+    border: 1px solid rgba(255,255,255,.12);
+    color: #94a3b8;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    backdrop-filter: blur(10px);
+  }
+
+  /* ── Progress / status bar ─────────────────────── */
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+  }
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+</style>
+</head>
+<body>
+
+<!-- ─── HEADER ────────────────────────────────────────────── -->
+<div style="position:sticky;top:0;z-index:50;background:rgba(11,15,26,.92);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);">
+  <div style="max-width:1400px;margin:0 auto;padding:12px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <div style="width:32px;height:32px;background:linear-gradient(135deg,#6366f1,#3b82f6);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px;">📱</div>
+      <div>
+        <div style="font-size:15px;font-weight:700;color:#f1f5f9;">iPad as Display</div>
+        <div style="font-size:10px;color:#64748b;letter-spacing:.06em;">ARCHITECTURE MAP</div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:6px;margin-left:auto;flex-wrap:wrap;" id="tab-bar">
+      <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+      <button class="tab-btn" onclick="showTab('server')">Server</button>
+      <button class="tab-btn" onclick="showTab('client')">Client</button>
+      <button class="tab-btn" onclick="showTab('endpoints')">API</button>
+      <button class="tab-btn" onclick="showTab('dataflow')">Data Flow</button>
+      <button class="tab-btn" onclick="showTab('decisions')">Decisions</button>
+    </div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <span class="badge" style="background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.25);">Python FastAPI</span>
+      <span class="badge" style="background:rgba(59,130,246,.15);color:#60a5fa;border:1px solid rgba(59,130,246,.25);">React PWA</span>
+      <span class="badge" style="background:rgba(139,92,246,.15);color:#a78bfa;border:1px solid rgba(139,92,246,.25);">WebRTC H.264</span>
+      <span class="badge" style="background:rgba(245,158,11,.15);color:#fbbf24;border:1px solid rgba(245,158,11,.25);">Windows Only</span>
+    </div>
+  </div>
+</div>
+
+<!-- ─── ZOOM CONTROLS ─────────────────────────────────────── -->
+<div id="zoom-controls">
+  <button class="zoom-btn" onclick="zoomIn()" title="Zoom in">+</button>
+  <div id="zoom-level">100%</div>
+  <button class="zoom-btn" onclick="zoomOut()" title="Zoom out">−</button>
+  <button class="zoom-btn" onclick="zoomReset()" title="Reset" style="font-size:12px;width:auto;padding:0 10px;">Reset</button>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TAB: OVERVIEW                                         -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-overview" class="tab-content">
+<div id="canvas-wrap">
+<div id="canvas">
+
+  <!-- ─── TOP: TITLE + LEGEND ──────────────────────── -->
+  <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:40px;gap:20px;flex-wrap:wrap;">
+    <div>
+      <h1 style="font-size:24px;font-weight:800;color:#f1f5f9;letter-spacing:-.02em;">System Architecture</h1>
+      <p style="color:#64748b;font-size:13px;margin-top:4px;">Windows PC → FastAPI server → iPad Safari/PWA · Single-user, LAN-only, no DB</p>
+    </div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;margin-bottom:2px;">Legend</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#6366f1;"></div> Core module</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#06b6d4;"></div> Capture pipeline</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#10b981;"></div> React hook</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#f59e0b;"></div> API endpoint</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#f43f5e;"></div> Missing / TODO</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;">
+        <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;margin-bottom:2px;">Stream Priority</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#8b5cf6;"></div> 1st — WebRTC H.264</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#3b82f6;"></div> 2nd — JPEG WebSocket</div>
+        <div style="display:flex;align-items:center;gap:6px;font-size:11px;"><div class="legend-dot" style="background:#64748b;"></div> 3rd — MJPEG HTTP</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── MAIN LAYOUT: 3 COLUMNS ───────────────────── -->
+  <div style="display:grid;grid-template-columns:340px 1fr 340px;gap:24px;align-items:start;">
+
+    <!-- ══ COL 1: WINDOWS PC ══════════════════════════ -->
+    <div class="zone" style="border-color:rgba(6,182,212,.25);background:rgba(6,182,212,.03);">
+      <span class="zone-label" style="background:#0b0f1a;color:#06b6d4;border-color:rgba(6,182,212,.3);">🖥️ Windows PC</span>
+
+      <!-- Virtual Monitor -->
+      <div class="card" style="background:rgba(6,182,212,.08);border-color:rgba(6,182,212,.25);margin-bottom:16px;">
+        <div class="card-title" style="color:#22d3ee;">Virtual Monitor #2</div>
+        <p style="font-size:11px;color:#94a3b8;line-height:1.5;">Install Virtual Display Driver<br>Set to <strong style="color:#e2e8f0;">Extend</strong> mode in Display Settings<br>Recommended: 1600×1200, 1920×1440, 2048×1536</p>
+      </div>
+
+      <!-- Capture Pipeline -->
+      <div class="zone" style="border-color:rgba(6,182,212,.15);margin-bottom:16px;padding:14px;">
+        <span class="zone-label" style="font-size:9px;background:#0b0f1a;color:#64748b;top:-10px;">capture/</span>
+        <div style="font-size:10px;font-weight:700;color:#64748b;letter-spacing:.08em;text-transform:uppercase;margin-bottom:10px;">Screen Capture Pipeline</div>
+
+        <div class="card has-tooltip" style="background:rgba(6,182,212,.1);border-color:rgba(6,182,212,.3);margin-bottom:8px;">
+          <div class="tooltip">Uses DXGI (DirectX Desktop Duplication). Maps monitor_index → output_idx = monitor_index - 1. Pauses when active_streams == 0.</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:18px;">⚡</span>
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#22d3ee;">dxcam_capture.py</div>
+              <div style="font-size:10px;color:#64748b;">Primary · DXGI · Low latency</div>
+            </div>
+            <span class="badge" style="background:rgba(16,185,129,.15);color:#34d399;margin-left:auto;">preferred</span>
+          </div>
+        </div>
+
+        <div style="text-align:center;font-size:10px;color:#475569;margin:4px 0;">↓ ImportError or crash</div>
+
+        <div class="card has-tooltip" style="margin-bottom:8px;">
+          <div class="tooltip">GDI-based screenshot via mss. Higher CPU than dxcam but universal. Same loop structure.</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:18px;">🔄</span>
+            <div>
+              <div style="font-size:12px;font-weight:700;color:#e2e8f0;">mss_capture.py</div>
+              <div style="font-size:10px;color:#64748b;">Fallback · GDI · Higher CPU</div>
+            </div>
+            <span class="badge" style="background:rgba(245,158,11,.12);color:#fbbf24;margin-left:auto;">fallback</span>
+          </div>
+        </div>
+
+        <div style="text-align:center;font-size:10px;color:#475569;margin:4px 0;">↓ publish_frame()</div>
+
+        <div class="card has-tooltip" style="background:rgba(99,102,241,.08);border-color:rgba(99,102,241,.2);">
+          <div class="tooltip">encode_frame(): resize PIL if scale&lt;1, JPEG encode via Pillow. set_latest_frame() under frame_lock.</div>
+          <div style="font-size:11px;font-weight:700;color:#a78bfa;">base.py — encode + publish</div>
+          <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap;">
+            <span class="badge" style="background:rgba(255,255,255,.07);color:#94a3b8;">PIL JPEG</span>
+            <span class="badge" style="background:rgba(255,255,255,.07);color:#94a3b8;">scale+quality</span>
+            <span class="badge" style="background:rgba(255,255,255,.07);color:#94a3b8;">encode_ms tracked</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- State -->
+      <div class="card has-tooltip" style="margin-bottom:8px;">
+        <div class="tooltip">In-process singleton. latest_frame bytes + frame_id. runtime_config + config_version. active_streams counter (pauses capture at 0). Thread-safe via threading.Lock.</div>
+        <div class="card-title" style="color:#f59e0b;">⚙️ state.py — Shared Memory</div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;font-size:10.5px;color:#94a3b8;">
+          <span>latest_frame (bytes)</span><span>frame_id (int)</span>
+          <span>runtime_config (dict)</span><span>config_version (int)</span>
+          <span>active_streams (int)</span><span>active_connections (list)</span>
+          <span>stream_stats (dict)</span><span>frame_stats (dict)</span>
+        </div>
+      </div>
+
+      <!-- Config -->
+      <div class="card has-tooltip">
+        <div class="tooltip">Startup priority: defaults → config.local.json → env vars. Atomic write with tmp-rename. All 16 config keys coerced and range-clamped.</div>
+        <div class="card-title" style="color:#94a3b8;">📄 config.py + config.local.json</div>
+        <div style="font-size:10.5px;color:#64748b;line-height:1.6;">
+          fps · quality · scale · view_mode<br>monitor_index · input_enabled · touch_cursor<br>auto_quality · display_brightness/contrast/sat<br>pinch_zoom · three_finger · scroll_sensitivity
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ COL 2: FASTAPI SERVER (CENTER) ════════════ -->
+    <div>
+      <!-- Auth -->
+      <div class="card has-tooltip" style="margin-bottom:20px;background:rgba(244,63,94,.06);border-color:rgba(244,63,94,.2);">
+        <div class="tooltip">SESSION_TOKEN = secrets.token_urlsafe(24). PAIRING_PIN = random 6-digit. Rate limit: 5 failures/60s. Token passed as ?token= (headers not possible for WS/img src).</div>
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span style="font-size:24px;">🔐</span>
+          <div style="flex:1;">
+            <div class="card-title" style="color:#fb7185;margin-bottom:4px;">auth.py — Token + PIN Auth</div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;">
+              <span class="badge" style="background:rgba(244,63,94,.12);color:#fb7185;">SESSION_TOKEN (per restart)</span>
+              <span class="badge" style="background:rgba(244,63,94,.12);color:#fb7185;">6-digit PAIRING_PIN</span>
+              <span class="badge" style="background:rgba(244,63,94,.12);color:#fb7185;">5 attempts / 60s</span>
+              <span class="badge" style="background:rgba(244,63,94,.12);color:#fb7185;">?token= query param</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- FastAPI Routes Grid -->
+      <div class="zone" style="border-color:rgba(99,102,241,.2);background:rgba(99,102,241,.03);margin-bottom:20px;">
+        <span class="zone-label" style="background:#0b0f1a;color:#818cf8;border-color:rgba(99,102,241,.3);">🚀 FastAPI Routes (main.py)</span>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:4px;">
+
+          <!-- Pairing -->
+          <div class="card has-tooltip" style="border-color:rgba(245,158,11,.25);background:rgba(245,158,11,.06);">
+            <div class="tooltip">POST /pair → validates PIN with secrets.compare_digest → returns SESSION_TOKEN. GET /pair-qr → HTML page. GET /pair-qr.svg → SVG. No auth needed.</div>
+            <div class="card-title" style="color:#fbbf24;">🔑 pairing.py</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.7;">
+              <code style="color:#fcd34d;font-size:10px;">POST /pair</code><br>
+              <code style="color:#fcd34d;font-size:10px;">GET /pair-qr</code><br>
+              <code style="color:#fcd34d;font-size:10px;">GET /pair-qr.svg</code>
+            </div>
+          </div>
+
+          <!-- Settings -->
+          <div class="card has-tooltip" style="border-color:rgba(99,102,241,.25);background:rgba(99,102,241,.06);">
+            <div class="tooltip">GET /settings → full config + monitors + advisory + stats. PATCH /settings → update_config() → save config.local.json. GET /stats → encode_ms, size_bytes, stream_fps, active_streams.</div>
+            <div class="card-title" style="color:#a78bfa;">⚙️ settings.py</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.7;">
+              <code style="color:#c4b5fd;font-size:10px;">GET /settings</code><br>
+              <code style="color:#c4b5fd;font-size:10px;">PATCH /settings</code><br>
+              <code style="color:#c4b5fd;font-size:10px;">GET /stats</code>
+            </div>
+          </div>
+
+          <!-- Stream -->
+          <div class="card has-tooltip" style="border-color:rgba(6,182,212,.25);background:rgba(6,182,212,.06);">
+            <div class="tooltip">GET /stream → MJPEG multipart stream (final fallback). WS /frames → binary JPEG per message, rate-limited to min(30, config.fps).</div>
+            <div class="card-title" style="color:#22d3ee;">📡 stream.py</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.7;">
+              <code style="color:#67e8f9;font-size:10px;">GET /stream</code> MJPEG<br>
+              <code style="color:#67e8f9;font-size:10px;">WS /frames</code> JPEG binary<br>
+              <span style="color:#475569;font-size:10px;">pauses if no viewers</span>
+            </div>
+          </div>
+
+          <!-- WebSocket -->
+          <div class="card has-tooltip" style="border-color:rgba(16,185,129,.25);background:rgba(16,185,129,.06);">
+            <div class="tooltip">Receives JSON input events. Refreshes monitor coords on config_version change. pyautogui.PAUSE=0 for zero-delay execution.</div>
+            <div class="card-title" style="color:#34d399;">🖱️ websocket.py</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.6;">
+              <code style="color:#6ee7b7;font-size:10px;">WS /ws</code> input events<br>
+              mousemove/down/up/click<br>scroll · pinch · keydown/up<br>typewrite · hotkey
+            </div>
+          </div>
+
+          <!-- WebRTC -->
+          <div class="card has-tooltip" style="border-color:rgba(139,92,246,.25);background:rgba(139,92,246,.06);">
+            <div class="tooltip">POST /webrtc/offer → SDP answer. ScreenVideoTrack grabs via mss, wraps as av.VideoFrame. prefer_h264() sets H.264 codec preference. Requires aiortc+av+numpy (HTTP 501 if absent).</div>
+            <div class="card-title" style="color:#a78bfa;">🎥 webrtc.py</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.6;">
+              <code style="color:#c4b5fd;font-size:10px;">POST /webrtc/offer</code><br>
+              ScreenVideoTrack (mss)<br>
+              H.264 codec preference<br>
+              <span style="color:#475569;font-size:10px;">optional: aiortc+av+numpy</span>
+            </div>
+          </div>
+
+          <!-- Monitors/QR -->
+          <div class="card">
+            <div class="card-title" style="color:#94a3b8;">🗺️ monitors.py + qr.py</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.6;">
+              monitor_list() discovery<br>
+              resolution_advisory()<br>
+              mismatch_percent calc<br>
+              QR SVG (dependency-free)
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Missing / TODO -->
+      <div class="zone" style="border-color:rgba(244,63,94,.2);background:rgba(244,63,94,.03);">
+        <span class="zone-label" style="background:#0b0f1a;color:#f43f5e;border-color:rgba(244,63,94,.3);">❌ Missing (TODO)</span>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:4px;">
+          <div class="card" style="border-color:rgba(244,63,94,.3);background:rgba(244,63,94,.06);">
+            <div class="card-title" style="color:#fb7185;">📋 Clipboard Sync</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">
+              No <code style="color:#fca5a5;font-size:10px;">/clipboard</code> route<br>
+              No WS clipboard_push/pull events<br>
+              <span style="color:#f43f5e;">Blocker:</span> HTTPS required for navigator.clipboard.readText on LAN IP
+            </div>
+          </div>
+          <div class="card" style="border-color:rgba(244,63,94,.3);background:rgba(244,63,94,.06);">
+            <div class="card-title" style="color:#fb7185;">🖥️ Virtual Display Setup Flow</div>
+            <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">
+              advisory data exists but no wizard UI<br>
+              Needs: step-by-step modal in SettingsPanel when mismatch_percent &gt; 5%
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══ COL 3: IPAD CLIENT ══════════════════════════ -->
+    <div class="zone" style="border-color:rgba(59,130,246,.25);background:rgba(59,130,246,.03);">
+      <span class="zone-label" style="background:#0b0f1a;color:#3b82f6;border-color:rgba(59,130,246,.3);">📱 iPad Safari / PWA</span>
+
+      <!-- Stream Reception -->
+      <div class="zone" style="border-color:rgba(139,92,246,.2);margin-bottom:14px;padding:12px;">
+        <span class="zone-label" style="font-size:9px;background:#0b0f1a;color:#8b5cf6;top:-10px;">useStreamStatus.js — cascade</span>
+        <div style="margin-top:4px;">
+          <div class="card has-tooltip" style="background:rgba(139,92,246,.1);border-color:rgba(139,92,246,.3);margin-bottom:6px;">
+            <div class="tooltip">RTCPeerConnection, POST /webrtc/offer, H.264 codec preference. Falls back to JPEG WS on connectionState failed/closed/disconnected.</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="background:#8b5cf6;color:#fff;font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;">1st</span>
+              <div>
+                <div style="font-size:11px;font-weight:700;color:#c4b5fd;">WebRTC H.264</div>
+                <div style="font-size:10px;color:#64748b;">&lt;video srcObject&gt;</div>
+              </div>
+            </div>
+          </div>
+          <div style="text-align:center;font-size:10px;color:#475569;">↓ WebRTC fails</div>
+          <div class="card has-tooltip" style="background:rgba(59,130,246,.08);border-color:rgba(59,130,246,.25);margin:6px 0;">
+            <div class="tooltip">WS /frames binary messages. Blob URL created per frame, swapped on requestAnimationFrame. URL.revokeObjectURL cleans up previous frame.</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="background:#3b82f6;color:#fff;font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;">2nd</span>
+              <div>
+                <div style="font-size:11px;font-weight:700;color:#93c5fd;">JPEG WebSocket</div>
+                <div style="font-size:10px;color:#64748b;">&lt;img src=blobURL&gt;</div>
+              </div>
+            </div>
+          </div>
+          <div style="text-align:center;font-size:10px;color:#475569;">↓ WS fails</div>
+          <div class="card has-tooltip" style="background:rgba(100,116,139,.08);border-color:rgba(100,116,139,.2);">
+            <div class="tooltip">GET /stream multipart/x-mixed-replace. Exponential backoff retry: 1s → 10s. Universal browser fallback.</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <span style="background:#475569;color:#fff;font-size:10px;font-weight:800;padding:1px 6px;border-radius:4px;">3rd</span>
+              <div>
+                <div style="font-size:11px;font-weight:700;color:#94a3b8;">MJPEG HTTP</div>
+                <div style="font-size:10px;color:#64748b;">&lt;img src=streamURL&gt;</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Hooks -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;margin-bottom:8px;">React Hooks</div>
+      <div style="display:grid;gap:6px;margin-bottom:14px;">
+        <div class="card has-tooltip" style="background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.2);">
+          <div class="tooltip">TOKEN_KEY in localStorage. pairDevice(pin) → POST /pair → stores token. clearSavedToken() forces re-pair flow.</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">🔑</span>
+            <div><div style="font-size:11px;font-weight:700;color:#34d399;">usePairing</div><div style="font-size:10px;color:#64748b;">localStorage token · POST /pair</div></div>
+          </div>
+        </div>
+        <div class="card has-tooltip" style="background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.2);">
+          <div class="tooltip">GET /settings with viewport dims. PATCH /settings for each change. Clears token on 401 response (forces re-pair).</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">⚙️</span>
+            <div><div style="font-size:11px;font-weight:700;color:#34d399;">useDisplaySettings</div><div style="font-size:10px;color:#64748b;">GET+PATCH /settings · advisory</div></div>
+          </div>
+        </div>
+        <div class="card has-tooltip" style="background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.2);">
+          <div class="tooltip">WS /ws JSON messages. Auto-reconnect every 2s. Ping/pong every 2s for RTT. mouseDownRef tracks drag state, released on disconnect.</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">🖱️</span>
+            <div><div style="font-size:11px;font-weight:700;color:#34d399;">useWebSocketInput</div><div style="font-size:10px;color:#64748b;">WS /ws · ping/pong RTT · drag</div></div>
+          </div>
+        </div>
+        <div class="card has-tooltip" style="background:rgba(16,185,129,.06);border-color:rgba(16,185,129,.2);">
+          <div class="tooltip">Polls GET /stats every 1s. Overload: encode_ms&gt;28 or size&gt;900KB → drop fps/quality/scale, 8s cooldown. Recovery: 20 stable samples → raise fps/quality/scale, 12s cooldown.</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">📊</span>
+            <div><div style="font-size:11px;font-weight:700;color:#34d399;">useLiveStats</div><div style="font-size:10px;color:#64748b;">GET /stats · auto-quality loop</div></div>
+          </div>
+        </div>
+        <div class="card has-tooltip">
+          <div class="tooltip">navigator.wakeLock.request('screen'). Re-acquires on visibilitychange. Active only when token present and stream is live.</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;">💡</span>
+            <div><div style="font-size:11px;font-weight:700;color:#e2e8f0;">useWakeLock + useViewportSize</div><div style="font-size:10px;color:#64748b;">screen lock · viewport dims</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Components -->
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;margin-bottom:8px;">Key Components</div>
+      <div style="display:grid;gap:6px;">
+        <div class="card has-tooltip" style="background:rgba(59,130,246,.06);border-color:rgba(59,130,246,.2);">
+          <div class="tooltip">video/img element + CSS filter (brightness/contrast/saturation). All touch events: tap→click, long-press→rightclick, drag, two-finger scroll, pinch (ctrl+scroll), three-finger undo/redo/copy/paste. Coordinates normalized to [0,1] via getDisplayBox().</div>
+          <div style="font-size:11px;font-weight:700;color:#60a5fa;">DisplaySurface.jsx</div>
+          <div style="font-size:10px;color:#64748b;">video/img · CSS filter · touch handler</div>
+        </div>
+        <div class="card has-tooltip">
+          <div class="tooltip">Shows stream mode (WebRTC/JPEG-WS/MJPEG), WS status, latency, FPS, frame size. Settings + Reconnect buttons. Double-tap toggles HUD.</div>
+          <div style="font-size:11px;font-weight:700;color:#e2e8f0;">Hud.jsx · SettingsPanel.jsx · SidecarControls.jsx</div>
+          <div style="font-size:10px;color:#64748b;">status bar · settings drawer · sidecar sidebar/touchbar</div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- end 3-col grid -->
+
+  <!-- ─── BOTTOM: KEY FLOWS ─────────────────────────── -->
+  <div style="margin-top:32px;display:grid;grid-template-columns:repeat(3,1fr);gap:20px;">
+
+    <div class="card">
+      <div class="card-title" style="color:#06b6d4;">🎬 Screen → iPad</div>
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <div class="flow-arrow"><span>dxcam.grab() / mss.grab()</span></div>
+        <div class="flow-arrow" style="color:#06b6d4;">↓ PIL Image</div>
+        <div class="flow-arrow"><span>resize + JPEG encode (Pillow)</span></div>
+        <div class="flow-arrow" style="color:#06b6d4;">↓ bytes → state</div>
+        <div class="flow-arrow"><span>WebRTC / WS /frames / GET /stream</span></div>
+        <div class="flow-arrow" style="color:#06b6d4;">↓ iPad</div>
+        <div class="flow-arrow"><span>&lt;video&gt; or &lt;img&gt; renders frame</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="color:#10b981;">👆 Touch → Windows</div>
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <div class="flow-arrow"><span>Touch event in DisplaySurface</span></div>
+        <div class="flow-arrow" style="color:#10b981;">↓ normalize to [0,1]</div>
+        <div class="flow-arrow"><span>send(&#123;type, x, y, ...&#125;) over WS /ws</span></div>
+        <div class="flow-arrow" style="color:#10b981;">↓ JSON parse</div>
+        <div class="flow-arrow"><span>abs_x = monitor.left + x × monitor.width</span></div>
+        <div class="flow-arrow" style="color:#10b981;">↓ pyautogui</div>
+        <div class="flow-arrow"><span>moveTo / click / scroll / hotkey</span></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="color:#f59e0b;">🔗 Pairing Flow</div>
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <div class="flow-arrow"><span>Server prints PIN at startup</span></div>
+        <div class="flow-arrow" style="color:#f59e0b;">↓</div>
+        <div class="flow-arrow"><span>Open /pair-qr on PC → scan with iPad</span></div>
+        <div class="flow-arrow" style="color:#f59e0b;">↓ opens app with ?pin=</span></div>
+        <div class="flow-arrow"><span>POST /pair &#123;pin&#125; → &#123;token&#125;</span></div>
+        <div class="flow-arrow" style="color:#f59e0b;">↓ localStorage</div>
+        <div class="flow-arrow"><span>All requests: ?token= query param</span></div>
+      </div>
+    </div>
+
+  </div>
+
+</div><!-- end #canvas -->
+</div><!-- end #canvas-wrap -->
+</div><!-- end tab-overview -->
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TAB: SERVER                                           -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-server" class="tab-content" style="display:none;max-width:1100px;margin:0 auto;padding:32px 24px;">
+  <h2 style="font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:20px;">Server Module Map</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="card">
+      <div class="card-title" style="color:#6366f1;">main.py — Entry Point</div>
+      <div class="file-row"><span class="file-name">create_app()</span><span class="file-desc">Registers all 5 routers, mounts client/dist StaticFiles at /</span></div>
+      <div class="file-row"><span class="file-name">capture_loop()</span><span class="file-desc">Started as daemon thread before uvicorn.run()</span></div>
+      <div class="file-row"><span class="file-name">patch_windows_proactor()</span><span class="file-desc">Silences ConnectionResetError on Windows asyncio Proactor</span></div>
+      <div class="file-row"><span class="file-name">print_startup_banner()</span><span class="file-desc">Prints IP, port, /pair-qr URL, PAIRING_PIN</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#f59e0b;">config.py — Configuration</div>
+      <div class="file-row"><span class="file-name">DEFAULT_CONFIG</span><span class="file-desc">16 keys with types and ranges</span></div>
+      <div class="file-row"><span class="file-name">load_startup_config()</span><span class="file-desc">defaults → config.local.json → env vars</span></div>
+      <div class="file-row"><span class="file-name">coerce_config()</span><span class="file-desc">Validates and clamps all values</span></div>
+      <div class="file-row"><span class="file-name">save_config_file()</span><span class="file-desc">Atomic tmp-rename, 3 attempts with backoff</span></div>
+      <div class="file-row"><span class="file-name">RECOMMENDED_RESOLUTIONS</span><span class="file-desc">["1600x1200","1920x1440","2048x1536"]</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#f59e0b;">state.py — In-Memory State</div>
+      <div class="file-row"><span class="file-name">set_latest_frame()</span><span class="file-desc">Stores JPEG bytes under frame_lock, increments frame_id</span></div>
+      <div class="file-row"><span class="file-name">update_config()</span><span class="file-desc">Validates update, bumps config_version, saves file</span></div>
+      <div class="file-row"><span class="file-name">increment/decrement_streams()</span><span class="file-desc">Tracks active viewers; decrement to 0 calls clear_latest_frame()</span></div>
+      <div class="file-row"><span class="file-name">record_stream_delivery()</span><span class="file-desc">Tracks stream_fps in 1s rolling window</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#fb7185;">auth.py — Security</div>
+      <div class="file-row"><span class="file-name">SESSION_TOKEN</span><span class="file-desc">secrets.token_urlsafe(24) — regenerated on server restart</span></div>
+      <div class="file-row"><span class="file-name">PAIRING_PIN</span><span class="file-desc">secrets.randbelow(1_000_000) formatted as 06d</span></div>
+      <div class="file-row"><span class="file-name">require_token()</span><span class="file-desc">Raises HTTP 401 — used by HTTP routes</span></div>
+      <div class="file-row"><span class="file-name">close_unauthorized()</span><span class="file-desc">WS close code 1008 — used by WebSocket routes</span></div>
+      <div class="file-row"><span class="file-name">pair_rate_limited()</span><span class="file-desc">Sliding window: 5 failures per 60s</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#22d3ee;">capture/ — Capture Pipeline</div>
+      <div class="file-row"><span class="file-name">manager.py</span><span class="file-desc">Tries dxcam_capture_loop(), falls back to mss on exception</span></div>
+      <div class="file-row"><span class="file-name">base.py</span><span class="file-desc">encode_frame() + publish_frame() — shared by both backends</span></div>
+      <div class="file-row"><span class="file-name">dxcam_capture.py</span><span class="file-desc">DXGI loop. output_idx = monitor_index - 1. Pauses when no viewers.</span></div>
+      <div class="file-row"><span class="file-name">mss_capture.py</span><span class="file-desc">GDI loop. Same structure, no camera object to manage.</span></div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#94a3b8;">monitors.py + qr.py</div>
+      <div class="file-row"><span class="file-name">selected_monitor()</span><span class="file-desc">Resolves monitor_index → mss monitor dict (fallback to 1)</span></div>
+      <div class="file-row"><span class="file-name">resolution_advisory()</span><span class="file-desc">Computes aspect mismatch %, returns status + recommended resolutions</span></div>
+      <div class="file-row"><span class="file-name">settings_response()</span><span class="file-desc">Assembles full /settings payload with advisory + stream_stats</span></div>
+      <div class="file-row"><span class="file-name">make_qr_svg()</span><span class="file-desc">Dependency-free QR SVG — no qrcode library needed</span></div>
+    </div>
+  </div>
+
+  <h3 style="font-size:14px;font-weight:700;color:#94a3b8;margin:28px 0 12px;">Test Coverage</h3>
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
+    <div class="card"><div class="file-row"><span class="file-name">test_auth.py</span><span class="file-desc">Token validation, rate limiting, PIN pairing</span></div></div>
+    <div class="card"><div class="file-row"><span class="file-name">test_config.py</span><span class="file-desc">Config coercion, env overrides, file persistence</span></div></div>
+    <div class="card"><div class="file-row"><span class="file-name">test_settings_route.py</span><span class="file-desc">GET/PATCH /settings HTTP responses</span></div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TAB: CLIENT                                           -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-client" class="tab-content" style="display:none;max-width:1100px;margin:0 auto;padding:32px 24px;">
+  <h2 style="font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:20px;">Client Module Map</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
+    <div class="card" style="border-color:rgba(59,130,246,.25);background:rgba(59,130,246,.04);">
+      <div class="card-title" style="color:#60a5fa;">App.jsx — Root Orchestration</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;margin-bottom:8px;">Wires all hooks. Routes: no token → PairingScreen, token present → main display tree. Computes displayBox from getDisplayBox().</div>
+      <div style="font-size:10px;color:#475569;">Props flow: hooks → App → DisplaySurface, Hud, SettingsPanel, SidecarControls, ConnectionOverlay</div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="color:#94a3b8;">api.js + constants.js</div>
+      <div class="file-row"><span class="file-name">buildApiUrl()</span><span class="file-desc">Adds ?token= and ?viewport_width/height= params</span></div>
+      <div class="file-row"><span class="file-name">buildWebSocketUrl()</span><span class="file-desc">ws:// or wss:// based on current protocol</span></div>
+      <div class="file-row"><span class="file-name">pairWithPin()</span><span class="file-desc">POST /pair</span></div>
+      <div class="file-row"><span class="file-name">sendWebRtcOffer()</span><span class="file-desc">POST /webrtc/offer {sdp, type}</span></div>
+      <div class="file-row"><span class="file-name">patchSettingsRequest()</span><span class="file-desc">PATCH /settings</span></div>
+    </div>
+
+    <div class="card" style="border-color:rgba(16,185,129,.2);background:rgba(16,185,129,.04);grid-column:1/-1;">
+      <div class="card-title" style="color:#34d399;">Hooks</div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;">
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px;">usePairing</div>
+          <div style="font-size:10.5px;color:#64748b;line-height:1.5;">localStorage read/write · POST /pair · clearSavedToken on logout/401</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px;">useDisplaySettings</div>
+          <div style="font-size:10.5px;color:#64748b;line-height:1.5;">GET /settings with viewport · PATCH /settings · 401 → clear token</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px;">useStreamStatus</div>
+          <div style="font-size:10.5px;color:#64748b;line-height:1.5;">WebRTC → JPEG WS → MJPEG cascade · Blob URL rAF swap · exp backoff 1s→10s</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px;">useWebSocketInput</div>
+          <div style="font-size:10.5px;color:#64748b;line-height:1.5;">WS /ws · auto-reconnect 2s · ping/pong RTT · mouseDown drag tracking</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px;">useLiveStats</div>
+          <div style="font-size:10.5px;color:#64748b;line-height:1.5;">GET /stats 1s poll · auto-quality down (8s CD) · auto-quality up (20 stable samples, 12s CD)</div>
+        </div>
+        <div>
+          <div style="font-size:11px;font-weight:700;color:#6ee7b7;margin-bottom:4px;">useWakeLock + useViewportSize</div>
+          <div style="font-size:10.5px;color:#64748b;line-height:1.5;">navigator.wakeLock · re-acquire on visibilitychange · visualViewport dims</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="border-color:rgba(59,130,246,.2);background:rgba(59,130,246,.04);grid-column:1/-1;">
+      <div class="card-title" style="color:#60a5fa;">Components</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">DisplaySurface</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">video/img · CSS filter · all touch gestures · coord normalization · TouchCursor</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">Hud</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">stream mode · WS status · latency · FPS · Settings btn · Reconnect btn</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">SettingsPanel</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">monitor selector · view mode · sliders · color presets · advisory display</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">SidecarControls</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">sidebar (left/right/off) · touchbar (top/bottom/off) · hotkey/keypress events</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">PairingScreen</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">PIN input · pairDevice() · error/busy states</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">ConnectionOverlay</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">connecting/error overlay · non-blocking when live</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">TouchCursor</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">dot at touch position when enabled</div></div>
+        <div><div style="font-size:11px;font-weight:700;color:#93c5fd;margin-bottom:4px;">utils/display.js</div><div style="font-size:10.5px;color:#64748b;line-height:1.5;">getDisplayBox() → {x,y,w,h,scaleX,scaleY} for fit/fill/stretch/native</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TAB: ENDPOINTS                                        -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-endpoints" class="tab-content" style="display:none;max-width:900px;margin:0 auto;padding:32px 24px;">
+  <h2 style="font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:20px;">API Endpoints</h2>
+  <div style="display:flex;flex-direction:column;gap:6px;">
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;padding:4px 10px;">Pairing (no auth required)</div>
+    <div class="endpoint"><span class="method" style="background:rgba(16,185,129,.2);color:#34d399;">POST</span><span class="ep-path">/pair</span><span style="font-size:10.5px;color:#64748b;">body: {pin}</span><span class="ep-desc">Returns {token} on valid PIN · Rate limited 5/60s</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/pair-qr</span><span class="ep-desc">HTML page with QR code + PIN display</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/pair-qr.svg</span><span class="ep-desc">Raw SVG QR code</span></div>
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;padding:12px 10px 4px;">Settings (token required)</div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/settings</span><span style="font-size:10.5px;color:#64748b;">?token &viewport_w &viewport_h</span><span class="ep-desc">config + monitors + advisory + stream_stats</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/info</span><span class="ep-desc">Alias for GET /settings</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(245,158,11,.2);color:#fbbf24;">PATCH</span><span class="ep-path">/settings</span><span style="font-size:10.5px;color:#64748b;">body: partial config</span><span class="ep-desc">Updates config, persists to config.local.json</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/stats</span><span class="ep-desc">fps · quality · scale · auto_quality · active_streams · encode/stream stats</span></div>
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;padding:12px 10px 4px;">Streaming (token required)</div>
+    <div class="endpoint"><span class="method" style="background:rgba(139,92,246,.2);color:#a78bfa;">POST</span><span class="ep-path">/webrtc/offer</span><span style="font-size:10.5px;color:#64748b;">body: {sdp, type}</span><span class="ep-desc">SDP answer → H.264 video track · primary mode</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(6,182,212,.2);color:#22d3ee;">WS</span><span class="ep-path">/frames</span><span class="ep-desc">Binary JPEG per message · rate-limited to min(30, fps) · 2nd mode</span></div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/stream</span><span class="ep-desc">MJPEG multipart/x-mixed-replace · 3rd/final fallback</span></div>
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;padding:12px 10px 4px;">Input (token required)</div>
+    <div class="endpoint"><span class="method" style="background:rgba(16,185,129,.2);color:#34d399;">WS</span><span class="ep-path">/ws</span><span class="ep-desc">JSON input events: mouse · keyboard · scroll · pinch · gestures → pyautogui</span></div>
+
+    <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#475569;padding:12px 10px 4px;">Static (no auth)</div>
+    <div class="endpoint"><span class="method" style="background:rgba(59,130,246,.2);color:#60a5fa;">GET</span><span class="ep-path">/</span><span class="ep-desc">React PWA (client/dist/index.html via FastAPI StaticFiles)</span></div>
+
+    <div style="margin-top:24px;padding:14px;background:rgba(16,185,129,.06);border:1px solid rgba(16,185,129,.2);border-radius:8px;">
+      <div style="font-size:11px;font-weight:700;color:#34d399;margin-bottom:8px;">WebSocket Message Types (/ws)</div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;font-size:10.5px;color:#64748b;">
+        <div><code style="color:#93c5fd;">ping</code> → pong (RTT)</div>
+        <div><code style="color:#93c5fd;">mousemove</code> x,y</div>
+        <div><code style="color:#93c5fd;">mousedown</code> x,y</div>
+        <div><code style="color:#93c5fd;">mouseup</code> x,y</div>
+        <div><code style="color:#93c5fd;">click</code> x,y</div>
+        <div><code style="color:#93c5fd;">rightclick</code> x,y</div>
+        <div><code style="color:#93c5fd;">scroll</code> x,y,dy</div>
+        <div><code style="color:#93c5fd;">pinch</code> x,y,scale</div>
+        <div><code style="color:#93c5fd;">keydown</code> key</div>
+        <div><code style="color:#93c5fd;">keyup</code> key</div>
+        <div><code style="color:#93c5fd;">keypress</code> key</div>
+        <div><code style="color:#93c5fd;">typewrite</code> text</div>
+        <div><code style="color:#93c5fd;">hotkey</code> keys[]</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TAB: DATA FLOW                                        -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-dataflow" class="tab-content" style="display:none;max-width:900px;margin:0 auto;padding:32px 24px;">
+  <h2 style="font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:20px;">Data Flows</h2>
+  <div style="display:grid;gap:20px;">
+
+    <div class="card">
+      <div class="card-title" style="color:#06b6d4;">🎬 Screen Capture → iPad Display</div>
+      <div class="step"><div class="step-num" style="background:rgba(6,182,212,.2);color:#22d3ee;">1</div><div class="step-text"><code>capture_loop</code> (daemon thread): <code>dxcam.grab(region)</code> → PIL Image RGB <em>or</em> <code>mss.grab(monitor)</code> → PIL Image</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(6,182,212,.2);color:#22d3ee;">2</div><div class="step-text"><code>publish_frame(img, config)</code>: resize if <code>scale &lt; 1.0</code>, JPEG encode via Pillow, record <code>capture_ms</code> + <code>encode_ms</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(6,182,212,.2);color:#22d3ee;">3</div><div class="step-text"><code>state.set_latest_frame(bytes, stats)</code>: stores under <code>frame_lock</code>, increments <code>frame_id</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(139,92,246,.2);color:#a78bfa;">4a</div><div class="step-text"><strong>WebRTC:</strong> <code>ScreenVideoTrack.recv()</code> grabs directly from mss, wraps as <code>av.VideoFrame</code>, aiortc encodes H.264 → RTP → iPad <code>&lt;video&gt;</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(59,130,246,.2);color:#60a5fa;">4b</div><div class="step-text"><strong>JPEG WS:</strong> <code>WS /frames</code> handler sends <code>latest_frame</code> bytes per message → iPad creates Blob URL → swap on rAF → <code>&lt;img&gt;</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(100,116,139,.2);color:#94a3b8;">4c</div><div class="step-text"><strong>MJPEG:</strong> <code>mjpeg_generator()</code> yields <code>--frame\r\nContent-Type:image/jpeg\r\n...\r\n{bytes}\r\n</code> → iPad <code>&lt;img src="/stream"&gt;</code></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="color:#10b981;">👆 Touch → Windows Input</div>
+      <div class="step"><div class="step-num" style="background:rgba(16,185,129,.2);color:#34d399;">1</div><div class="step-text"><code>DisplaySurface.jsx</code> touch handler: map touch coords to position within <code>displayBox</code>, normalize to [0, 1]</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(16,185,129,.2);color:#34d399;">2</div><div class="step-text"><code>useWebSocketInput.send({type, x, y, ...})</code>: <code>JSON.stringify()</code>, <code>ws.send()</code> on open socket</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(16,185,129,.2);color:#34d399;">3</div><div class="step-text">Server <code>WS /ws</code>: <code>json.loads(raw)</code>, check <code>config_version</code>, recompute <code>display_w/h/x/y</code> if changed</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(16,185,129,.2);color:#34d399;">4</div><div class="step-text"><code>abs_x = display_x + int(nx × display_w)</code>, <code>abs_y = display_y + int(ny × display_h)</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(16,185,129,.2);color:#34d399;">5</div><div class="step-text"><code>pyautogui</code>: <code>moveTo</code> / <code>mouseDown</code> / <code>mouseUp</code> / <code>click</code> / <code>rightClick</code> / <code>scroll</code> / <code>hotkey</code> / <code>write</code></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="color:#f59e0b;">🔗 Pairing Flow</div>
+      <div class="step"><div class="step-num" style="background:rgba(245,158,11,.2);color:#fbbf24;">1</div><div class="step-text">Server startup: <code>PAIRING_PIN = f"{secrets.randbelow(1_000_000):06d}"</code>, <code>SESSION_TOKEN = secrets.token_urlsafe(24)</code> — printed in banner</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(245,158,11,.2);color:#fbbf24;">2</div><div class="step-text">User opens <code>http://localhost:8080/pair-qr</code> on PC → scans QR with iPad camera</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(245,158,11,.2);color:#fbbf24;">3</div><div class="step-text">QR URL = <code>http://&lt;ip&gt;:8080/?pin=XXXXXX</code>. App pre-fills PIN, user taps Connect.</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(245,158,11,.2);color:#fbbf24;">4</div><div class="step-text"><code>POST /pair {pin}</code> → <code>secrets.compare_digest(pin, PAIRING_PIN)</code> → returns <code>{token: SESSION_TOKEN}</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(245,158,11,.2);color:#fbbf24;">5</div><div class="step-text">iPad stores <code>token</code> in <code>localStorage["ipad-display-token-v1"]</code>. All future requests append <code>?token=</code>.</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="color:#8b5cf6;">⚡ Auto-Quality Control Loop</div>
+      <div class="step"><div class="step-num" style="background:rgba(139,92,246,.2);color:#a78bfa;">1</div><div class="step-text"><code>useLiveStats</code> polls <code>GET /stats</code> every 1000ms → <code>encode_ms</code>, <code>size_bytes</code>, <code>auto_quality</code> flag</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(244,63,94,.2);color:#fb7185;">▼</div><div class="step-text"><strong>Overloaded</strong> if <code>encode_ms &gt; 28</code> OR <code>size_bytes &gt; 900 KB</code>:<br>→ <code>PATCH /settings {fps: min(fps,30), quality: min(q,75), scale: min(s,0.75)}</code> · 8s cooldown</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(16,185,129,.2);color:#34d399;">▲</div><div class="step-text"><strong>Stable</strong> if <code>encode_ms &lt; 14</code> AND <code>size_bytes &lt; 350 KB</code> for 20 consecutive samples:<br>→ <code>PATCH /settings {fps: +5, quality: +5, scale: +0.05}</code> · 12s cooldown</div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="color:#94a3b8;">🔧 Settings Sync</div>
+      <div class="step"><div class="step-num" style="background:rgba(100,116,139,.2);color:#94a3b8;">1</div><div class="step-text">App load → <code>useDisplaySettings.loadSettings()</code> → <code>GET /settings?viewport_width=&viewport_height=</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(100,116,139,.2);color:#94a3b8;">2</div><div class="step-text">Server: <code>settings_response()</code> assembles config + monitors + advisory + frame_stats</div></div>
+      <div class="step"><div class="step-num" style="background:rgba(100,116,139,.2);color:#94a3b8;">3</div><div class="step-text">iPad changes setting → <code>applySettings(patch)</code> → <code>PATCH /settings</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(100,116,139,.2);color:#94a3b8;">4</div><div class="step-text">Server: <code>update_config()</code> validates + updates <code>runtime_config</code> + increments <code>config_version</code> + saves <code>config.local.json</code></div></div>
+      <div class="step"><div class="step-num" style="background:rgba(100,116,139,.2);color:#94a3b8;">5</div><div class="step-text">Capture loop detects <code>config_version</code> change on next tick → reinitializes camera/monitor parameters</div></div>
+    </div>
+
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<!--  TAB: DECISIONS                                        -->
+<!-- ═══════════════════════════════════════════════════════ -->
+<div id="tab-decisions" class="tab-content" style="display:none;max-width:900px;margin:0 auto;padding:32px 24px;">
+  <h2 style="font-size:18px;font-weight:700;color:#f1f5f9;margin-bottom:20px;">Architecture Decisions & Constraints</h2>
+  <div style="display:grid;gap:14px;">
+
+    <div class="card" style="border-left:3px solid #6366f1;">
+      <div class="card-title" style="color:#a78bfa;">Stream mode cascade: WebRTC → JPEG WS → MJPEG</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">WebRTC delivers H.264 with hardware encoding and lowest latency. JPEG WS avoids HTTP connection overhead vs MJPEG. MJPEG is the universal fallback that works on any browser without extra negotiation. The client manages three distinct lifecycles and falls back automatically on any failure.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #f59e0b;">
+      <div class="card-title" style="color:#fbbf24;">Single in-process state singleton (no DB)</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">Avoids external dependencies for a single-user local tool. <code style="color:#93c5fd;font-size:10.5px;">threading.Lock</code> is sufficient. Implication: server restart resets all state except persisted config. Not scalable beyond one session.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #06b6d4;">
+      <div class="card-title" style="color:#22d3ee;">Capture pauses when active_streams == 0</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">No point capturing frames when no client is watching. <code style="color:#93c5fd;font-size:10.5px;">active_streams</code> counter is incremented on stream connect, decremented on disconnect. At 0, dxcam camera is stopped and <code style="color:#93c5fd;font-size:10.5px;">clear_latest_frame()</code> is called. First frame after reconnect may be slightly delayed.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #10b981;">
+      <div class="card-title" style="color:#34d399;">config_version integer for cache-busting</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">Both the capture loop and the WebSocket input handler need to react to settings changes (monitor switch, scale change). A version integer that increments on every <code style="color:#93c5fd;font-size:10.5px;">update_config()</code> lets all hot-path loops detect changes on the next tick without an event queue or pub/sub system.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #f43f5e;">
+      <div class="card-title" style="color:#fb7185;">Token as ?token= query param (not Authorization header)</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">WebSocket connections and <code style="color:#93c5fd;font-size:10.5px;">&lt;img src=&gt;</code> MJPEG cannot set custom headers — query param is the only portable option. Token is visible in server logs and browser history, but acceptable for local LAN use. Mitigated by token being random 24-byte urlsafe string.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #06b6d4;">
+      <div class="card-title" style="color:#22d3ee;">Coordinate normalization [0,1] over the wire</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">Decouples iPad viewport size from Windows monitor resolution. Server recomputes absolute pixel coordinates from current monitor dimensions. WebSocket handler refreshes these on <code style="color:#93c5fd;font-size:10.5px;">config_version</code> change, so monitor switches are transparent to the client.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #f59e0b;">
+      <div class="card-title" style="color:#fbbf24;">dxcam preferred over mss — output_idx = monitor_index - 1</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">dxcam uses DXGI (DirectX desktop duplication) — significantly lower latency and CPU than GDI-based mss. Critical gotcha: dxcam indexes monitors 0-based (output_idx) while mss indexes 1-based (monitor_index). The mapping is <code style="color:#93c5fd;font-size:10.5px;">output_idx = monitor_index - 1</code>.</div>
+    </div>
+
+    <div class="card" style="border-left:3px solid #8b5cf6;">
+      <div class="card-title" style="color:#a78bfa;">Auto-quality runs entirely on the client</div>
+      <div style="font-size:11px;color:#94a3b8;line-height:1.6;">Client observes <code style="color:#93c5fd;font-size:10.5px;">encode_ms</code> and <code style="color:#93c5fd;font-size:10.5px;">size_bytes</code> from <code style="color:#93c5fd;font-size:10.5px;">GET /stats</code> and decides when to throttle via <code style="color:#93c5fd;font-size:10.5px;">PATCH /settings</code>. Avoids server-side complexity at the cost of 1s polling lag. Caveat: two iPads connected could fight over quality settings.</div>
+    </div>
+
+    <h3 style="font-size:13px;font-weight:700;color:#64748b;letter-spacing:.08em;text-transform:uppercase;margin-top:8px;">Hard Constraints</h3>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div class="card" style="background:rgba(244,63,94,.05);border-color:rgba(244,63,94,.2);">
+        <div style="font-size:11px;font-weight:700;color:#fb7185;margin-bottom:6px;">Windows-only</div>
+        <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">dxcam = DXGI API (Windows). pyautogui input injection = Win32. mss works cross-platform but capture + input would need replacement on macOS/Linux.</div>
+      </div>
+      <div class="card" style="background:rgba(244,63,94,.05);border-color:rgba(244,63,94,.2);">
+        <div style="font-size:11px;font-weight:700;color:#fb7185;margin-bottom:6px;">Single session token</div>
+        <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">SESSION_TOKEN is one value shared by all clients. Multiple iPads share the same token and can control the same cursor. No per-client isolation.</div>
+      </div>
+      <div class="card" style="background:rgba(244,63,94,.05);border-color:rgba(244,63,94,.2);">
+        <div style="font-size:11px;font-weight:700;color:#fb7185;margin-bottom:6px;">No HTTPS by default</div>
+        <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">Wake Lock and Clipboard API require secure context. On LAN via IP, HTTPS needs a self-signed cert. navigator.clipboard.readText will silently fail on http://.</div>
+      </div>
+      <div class="card" style="background:rgba(244,63,94,.05);border-color:rgba(244,63,94,.2);">
+        <div style="font-size:11px;font-weight:700;color:#fb7185;margin-bottom:6px;">pyautogui.PAUSE = 0</div>
+        <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">Eliminates the 0.1s default delay between all pyautogui calls. Necessary for responsive input, but removes all safety pauses globally.</div>
+      </div>
+      <div class="card" style="background:rgba(244,63,94,.05);border-color:rgba(244,63,94,.2);">
+        <div style="font-size:11px;font-weight:700;color:#fb7185;margin-bottom:6px;">WebRTC ScreenVideoTrack uses own mss</div>
+        <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">Independent of the shared capture loop. Runs at display framerate, not config fps. Can create competing capture load alongside the main loop.</div>
+      </div>
+      <div class="card" style="background:rgba(244,63,94,.05);border-color:rgba(244,63,94,.2);">
+        <div style="font-size:11px;font-weight:700;color:#fb7185;margin-bottom:6px;">config.local.json: single-process only</div>
+        <div style="font-size:10.5px;color:#94a3b8;line-height:1.5;">Atomic tmp-rename write handles single-process races. Would break under multi-worker uvicorn (not used currently, but worth noting if scaling).</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── Tab switching ──────────────────────────────────────────
+function showTab(name) {
+  document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none');
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  document.getElementById('tab-' + name).style.display = '';
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    if (btn.textContent.toLowerCase().replace(/\s/g,'') === name.replace(/\s/g,'') ||
+        btn.getAttribute('onclick')?.includes("'" + name + "'")) {
+      btn.classList.add('active');
+    }
+  });
+}
+
+// ── Pan + Zoom (overview canvas) ──────────────────────────
+let scale = 1, tx = 0, ty = 0;
+let dragging = false, lastX = 0, lastY = 0;
+const wrap = document.getElementById('canvas-wrap');
+const canvas = document.getElementById('canvas');
+
+function applyTransform() {
+  canvas.style.transform = `translate(${tx}px,${ty}px) scale(${scale})`;
+  document.getElementById('zoom-level').textContent = Math.round(scale * 100) + '%';
+}
+
+wrap.addEventListener('mousedown', e => {
+  if (e.button !== 0) return;
+  dragging = true; lastX = e.clientX; lastY = e.clientY;
+  wrap.classList.add('grabbing');
+});
+window.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  tx += e.clientX - lastX; ty += e.clientY - lastY;
+  lastX = e.clientX; lastY = e.clientY;
+  applyTransform();
+});
+window.addEventListener('mouseup', () => { dragging = false; wrap.classList.remove('grabbing'); });
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const rect = wrap.getBoundingClientRect();
+  const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+  const delta = e.deltaY < 0 ? 1.1 : 0.91;
+  const newScale = Math.min(2.5, Math.max(0.25, scale * delta));
+  tx = mx - (mx - tx) * (newScale / scale);
+  ty = my - (my - ty) * (newScale / scale);
+  scale = newScale;
+  applyTransform();
+}, { passive: false });
+
+// Touch pan/zoom
+let touches = [];
+wrap.addEventListener('touchstart', e => { touches = [...e.touches]; }, { passive: true });
+wrap.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (e.touches.length === 1 && touches.length === 1) {
+    tx += e.touches[0].clientX - touches[0].clientX;
+    ty += e.touches[0].clientY - touches[0].clientY;
+  } else if (e.touches.length === 2 && touches.length === 2) {
+    const d0 = Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+    const d1 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
+    const ratio = d1 / d0;
+    scale = Math.min(2.5, Math.max(0.25, scale * ratio));
+  }
+  touches = [...e.touches];
+  applyTransform();
+}, { passive: false });
+
+function zoomIn()    { scale = Math.min(2.5, scale * 1.15); applyTransform(); }
+function zoomOut()   { scale = Math.max(0.25, scale * 0.87); applyTransform(); }
+function zoomReset() { scale = 1; tx = 0; ty = 0; applyTransform(); }
+
+// Set canvas-wrap height
+function setCanvasHeight() {
+  const vh = window.innerHeight - 57; // header height
+  wrap.style.height = vh + 'px';
+}
+setCanvasHeight();
+window.addEventListener('resize', setCanvasHeight);
+</script>
+</body>
+</html>

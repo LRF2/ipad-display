@@ -1,0 +1,13 @@
+export const WS_PATH = "/ws";
+export const FRAME_WS_PATH = "/frames";
+export const STREAM_PATH = "/stream";
+export const WEBRTC_OFFER_PATH = "/webrtc/offer";
+export const SETTINGS_PATH = "/settings";
+export const STATS_PATH = "/stats";
+export const PAIR_PATH = "/pair";
+export const TOKEN_KEY = "ipad-display-token-v1";
+export const TAP_MAX_MS = 200;
+export const TAP_MOVE_TOLERANCE = 0.01;
+export const LONG_PRESS_MS = 550;
+export const PINCH_THRESHOLD = 0.05;
+export const TWO_FINGER_SCROLL_STEP = 3;
